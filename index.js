@@ -8,32 +8,27 @@ const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
 const VOICE_ID = process.env.ELEVENLABS_VOICE_ID;
 const PORT = process.env.PORT || 3000;
 
-// 🎧 Memory audio
+// 🎧 Audio memory
 let latestAudioBuffer = null;
 
 // 🧠 Reply Logic
 function getDemoReply(text) {
   text = (text || "").toLowerCase();
 
-  if (text.includes("fees") || text.includes("price")) {
+  if (text.includes("fees") || text.includes("price"))
     return "Sir, hamare gym ki monthly fees 1500 rupees hai. Quarterly aur yearly plans par discount bhi milta hai 😊";
-  }
 
-  if (text.includes("timing") || text.includes("time")) {
+  if (text.includes("timing") || text.includes("time"))
     return "Sir, gym subah 6 baje se raat 10 baje tak open rehta hai.";
-  }
 
-  if (text.includes("trainer")) {
+  if (text.includes("trainer"))
     return "Ji sir, certified trainers available hain. Personal training bhi mil sakti hai.";
-  }
 
-  if (text.includes("location") || text.includes("address")) {
+  if (text.includes("location") || text.includes("address"))
     return "Sir, Ansh Gym main road ke paas located hai. Easy parking available hai.";
-  }
 
-  if (text.includes("soch") || text.includes("decide")) {
+  if (text.includes("soch") || text.includes("decide"))
     return "Bilkul sir 😊 Aap aaraam se sochiye. Agar koi doubt ho to humein call kar sakte hain.";
-  }
 
   return "Ji sir 😊 Main aapki help ke liye yahin hoon. Aap kya jaana chahenge?";
 }
@@ -53,24 +48,13 @@ async function textToSpeech(text) {
       headers: {
         "Content-Type": "application/json",
         "xi-api-key": ELEVENLABS_API_KEY
-      },
-      timeout: 8000
+      }
     };
 
     const req = https.request(options, (res) => {
       const chunks = [];
-
       res.on("data", (chunk) => chunks.push(chunk));
-
-      res.on("end", () => {
-        const audioBuffer = Buffer.concat(chunks);
-        resolve(audioBuffer);
-      });
-    });
-
-    req.on("timeout", () => {
-      req.destroy();
-      reject("ElevenLabs timeout");
+      res.on("end", () => resolve(Buffer.concat(chunks)));
     });
 
     req.on("error", reject);
@@ -88,22 +72,35 @@ function logCall(data) {
 // 🌐 Server
 const server = http.createServer(async (req, res) => {
 
-  // 🎵 AUDIO ENDPOINT
+  // 🎵 AUDIO (NEVER FAIL SAFE)
   if (req.url.startsWith("/audio")) {
+    try {
+      if (!latestAudioBuffer) {
+        console.log("⚠ No audio → sending silence fallback");
 
-    if (!latestAudioBuffer) {
-      console.log("❌ No audio buffer available");
+        const silence = Buffer.from(""); // empty buffer
+
+        res.writeHead(200, {
+          "Content-Type": "audio/mpeg",
+          "Content-Length": silence.length
+        });
+
+        return res.end(silence);
+      }
+
+      res.writeHead(200, {
+        "Content-Type": "audio/mpeg",
+        "Content-Length": latestAudioBuffer.length
+      });
+
+      return res.end(latestAudioBuffer);
+
+    } catch (err) {
+      console.log("🔥 AUDIO ERROR:", err);
 
       res.writeHead(200, { "Content-Type": "text/plain" });
-      return res.end("Audio not ready");
+      return res.end("audio error fallback");
     }
-
-    res.writeHead(200, {
-      "Content-Type": "audio/mpeg",
-      "Content-Length": latestAudioBuffer.length
-    });
-
-    return res.end(latestAudioBuffer);
   }
 
   // 📞 VOICE
@@ -111,10 +108,10 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { "Content-Type": "text/xml" });
 
     try {
-      const greetingText =
+      const greeting =
         "Namaste 😊 Ansh Gym mein aapka swagat hai! Main aapki kaise help kar sakta hoon?";
 
-      latestAudioBuffer = await textToSpeech(greetingText);
+      latestAudioBuffer = await textToSpeech(greeting);
 
       return res.end(`
 <Response>
@@ -125,7 +122,7 @@ const server = http.createServer(async (req, res) => {
       `);
 
     } catch (err) {
-      console.log("🔥 TTS ERROR:", err);
+      console.log("🔥 VOICE TTS ERROR:", err);
 
       return res.end(`
 <Response>
@@ -180,15 +177,7 @@ const server = http.createServer(async (req, res) => {
   else if (req.url.startsWith("/logs")) {
     fs.readFile("call_logs.txt", "utf8", (err, data) => {
       res.writeHead(200, { "Content-Type": "text/html" });
-
-      res.end(`
-        <html>
-        <body style="font-family: Arial; background:black; color:white; padding:20px;">
-          <h2>📞 AI Caller Logs</h2>
-          <pre>${data || "No logs yet..."}</pre>
-        </body>
-        </html>
-      `);
+      res.end(`<pre>${data || "No logs yet"}</pre>`);
     });
   }
 
