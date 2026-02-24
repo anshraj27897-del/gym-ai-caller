@@ -8,6 +8,9 @@ const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
 const VOICE_ID = process.env.ELEVENLABS_VOICE_ID;
 const PORT = process.env.PORT || 3000;
 
+// 🎧 Temporary audio storage (memory)
+let latestAudioBuffer = null;
+
 // 🧠 Demo Reply Logic
 function getDemoReply(text) {
   text = (text || "").toLowerCase();
@@ -35,7 +38,7 @@ function getDemoReply(text) {
   return "Ji sir 😊 Main aapki help ke liye yahin hoon. Aap kya jaana chahenge?";
 }
 
-// 🔊 ElevenLabs TTS
+// 🔊 ElevenLabs TTS → returns BUFFER (NOT base64)
 async function textToSpeech(text) {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify({
@@ -55,12 +58,10 @@ async function textToSpeech(text) {
 
     const req = https.request(options, (res) => {
       const chunks = [];
-
       res.on("data", (chunk) => chunks.push(chunk));
-
       res.on("end", () => {
         const audioBuffer = Buffer.concat(chunks);
-        resolve(audioBuffer.toString("base64"));
+        resolve(audioBuffer);
       });
     });
 
@@ -79,17 +80,34 @@ function logCall(data) {
 // 🌐 Server
 const server = http.createServer(async (req, res) => {
 
+  // 🎵 Serve Audio to Twilio
+  if (req.url.startsWith("/audio")) {
+    if (!latestAudioBuffer) {
+      res.writeHead(404);
+      return res.end("No audio");
+    }
+
+    res.writeHead(200, {
+      "Content-Type": "audio/mpeg",
+      "Content-Length": latestAudioBuffer.length
+    });
+
+    return res.end(latestAudioBuffer);
+  }
+
   // 📞 Incoming Call
   if (req.url.startsWith("/voice")) {
     res.writeHead(200, { "Content-Type": "text/xml" });
 
-    const greetingText = "Namaste 😊 Ansh Gym mein aapka swagat hai! Main aapki kaise help kar sakta hoon?";
-    const audioBase64 = await textToSpeech(greetingText);
+    const greetingText =
+      "Namaste 😊 Ansh Gym mein aapka swagat hai! Main aapki kaise help kar sakta hoon?";
+
+    latestAudioBuffer = await textToSpeech(greetingText);
 
     return res.end(`
 <Response>
   <Gather input="speech" action="/process" method="POST">
-    <Play>data:audio/mpeg;base64,${audioBase64}</Play>
+    <Play>https://${req.headers.host}/audio</Play>
   </Gather>
 </Response>
     `);
@@ -108,7 +126,7 @@ const server = http.createServer(async (req, res) => {
       logCall(`User said: ${speech}`);
 
       const replyText = getDemoReply(speech);
-      const audioBase64 = await textToSpeech(replyText);
+      latestAudioBuffer = await textToSpeech(replyText);
 
       logCall(`AI replied: ${replyText}`);
 
@@ -116,7 +134,7 @@ const server = http.createServer(async (req, res) => {
 
       res.end(`
 <Response>
-  <Play>data:audio/mpeg;base64,${audioBase64}</Play>
+  <Play>https://${req.headers.host}/audio</Play>
   <Redirect>/voice</Redirect>
 </Response>
       `);
