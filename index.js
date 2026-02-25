@@ -11,7 +11,7 @@ const PORT = process.env.PORT || 3000;
 // 🎧 Audio memory
 let latestAudioBuffer = null;
 
-// 🧠 Reply Logic (UNCHANGED ✅)
+// 🧠 Reply Logic
 function getDemoReply(text) {
   text = (text || "").toLowerCase();
 
@@ -33,7 +33,7 @@ function getDemoReply(text) {
   return "Ji sir 😊 Main aapki help ke liye yahin hoon. Aap kya jaana chahenge?";
 }
 
-// 🔊 ElevenLabs TTS → RETURNS BUFFER
+// 🔊 ElevenLabs TTS
 async function textToSpeech(text) {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify({
@@ -72,57 +72,71 @@ function logCall(data) {
 // 🌐 Server
 const server = http.createServer(async (req, res) => {
 
-  // 🎵 AUDIO (NEVER FAIL SAFE ✅)
+  // 🎵 AUDIO (CRASH-PROOF)
   if (req.url.startsWith("/audio")) {
     try {
-      const buffer = latestAudioBuffer || Buffer.from("");
+      if (!latestAudioBuffer) {
+        console.log("⚠ No audio yet → sending silence MP3");
+
+        const silenceBase64 =
+          "SUQzAwAAAAAAFlRFTkMAAAAPAAADTGF2ZjU4LjMyLjEwNAAAAAAAAAAAAAAA//uQxAADBzQAZGF0YQAAAAA=";
+
+        const silenceBuffer = Buffer.from(silenceBase64, "base64");
+
+        res.writeHead(200, {
+          "Content-Type": "audio/mpeg",
+          "Content-Length": silenceBuffer.length
+        });
+
+        return res.end(silenceBuffer);
+      }
 
       res.writeHead(200, {
         "Content-Type": "audio/mpeg",
-        "Content-Length": buffer.length
+        "Content-Length": latestAudioBuffer.length
       });
 
-      return res.end(buffer);
+      return res.end(latestAudioBuffer);
 
     } catch (err) {
       console.log("🔥 AUDIO ERROR:", err);
       res.writeHead(200);
-      return res.end("");
+      return res.end();
     }
   }
 
-  // 📞 VOICE → INSTANT RESPONSE ⚡ (IMPORTANT FIX)
+  // 📞 VOICE (Incoming Call)
   if (req.url.startsWith("/voice")) {
-
     res.writeHead(200, { "Content-Type": "text/xml" });
 
-    // ✅ Twilio ko instantly TwiML
-    res.end(`
-<Response>
-  <Gather input="speech" action="/process" method="POST">
-    <Play>https://${req.headers.host}/audio</Play>
-  </Gather>
-</Response>
-    `);
-
-    // 🎙 Background me greeting generate
     try {
       const greeting =
         "Namaste 😊 Ansh Gym mein aapka swagat hai! Main aapki kaise help kar sakta hoon?";
 
       latestAudioBuffer = await textToSpeech(greeting);
 
-      console.log("✅ Greeting audio ready");
+      return res.end(`
+<Response>
+  <Gather input="speech" action="/process" method="POST">
+    <Play>https://${req.headers.host}/audio</Play>
+  </Gather>
+</Response>
+      `);
 
     } catch (err) {
       console.log("🔥 VOICE TTS ERROR:", err);
-    }
 
-    return;
+      return res.end(`
+<Response>
+  <Say>Namaste. Ansh Gym mein aapka swagat hai.</Say>
+  <Gather input="speech" action="/process" method="POST"/>
+</Response>
+      `);
+    }
   }
 
-  // 🎤 PROCESS
-  if (req.url.startsWith("/process")) {
+  // 🎤 PROCESS (Speech Handler)
+  else if (req.url.startsWith("/process")) {
     let body = "";
 
     req.on("data", chunk => body += chunk.toString());
@@ -137,7 +151,6 @@ const server = http.createServer(async (req, res) => {
         logCall(`User said: ${speech}`);
 
         const replyText = getDemoReply(speech);
-
         latestAudioBuffer = await textToSpeech(replyText);
 
         logCall(`AI replied: ${replyText}`);
@@ -160,22 +173,21 @@ const server = http.createServer(async (req, res) => {
         `);
       }
     });
-
-    return;
   }
 
   // 📊 LOGS
-  if (req.url.startsWith("/logs")) {
+  else if (req.url.startsWith("/logs")) {
     fs.readFile("call_logs.txt", "utf8", (err, data) => {
       res.writeHead(200, { "Content-Type": "text/html" });
       res.end(`<pre>${data || "No logs yet"}</pre>`);
     });
-    return;
   }
 
   // ✅ HEALTH
-  res.writeHead(200);
-  res.end("Server running");
+  else {
+    res.writeHead(200);
+    res.end("Server running");
+  }
 });
 
 // 🚀 START
