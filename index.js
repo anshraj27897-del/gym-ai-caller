@@ -3,12 +3,10 @@ const https = require("https");
 const { URLSearchParams } = require("url");
 const fs = require("fs");
 
-// 🔐 ENV
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
 const VOICE_ID = process.env.ELEVENLABS_VOICE_ID;
 const PORT = process.env.PORT || 3000;
 
-// 🎧 Audio memory
 let latestAudioBuffer = null;
 
 // 🧠 Reply Logic
@@ -28,12 +26,12 @@ function getDemoReply(text) {
     return "Sir, Ansh Gym main road ke paas located hai. Easy parking available hai.";
 
   if (text.includes("soch") || text.includes("decide"))
-    return "Bilkul sir 😊 Aap aaraam se sochiye. Agar koi doubt ho to humein call kar sakte hain.";
+    return "Bilkul sir 😊 Aap aaraam se sochiye.";
 
-  return "Ji sir 😊 Main aapki help ke liye yahin hoon. Aap kya jaana chahenge?";
+  return "Ji sir 😊 Main aapki help ke liye yahin hoon.";
 }
 
-// 🔊 ElevenLabs TTS
+// 🔊 ElevenLabs TTS (SAFE)
 async function textToSpeech(text) {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify({
@@ -48,13 +46,20 @@ async function textToSpeech(text) {
       headers: {
         "Content-Type": "application/json",
         "xi-api-key": ELEVENLABS_API_KEY
-      }
+      },
+      timeout: 8000 // 🔥 critical fix
     };
 
     const req = https.request(options, (res) => {
       const chunks = [];
-      res.on("data", (chunk) => chunks.push(chunk));
+
+      res.on("data", chunk => chunks.push(chunk));
       res.on("end", () => resolve(Buffer.concat(chunks)));
+    });
+
+    req.on("timeout", () => {
+      req.destroy();
+      reject("ElevenLabs timeout");
     });
 
     req.on("error", reject);
@@ -72,40 +77,25 @@ function logCall(data) {
 // 🌐 Server
 const server = http.createServer(async (req, res) => {
 
-  // 🎵 AUDIO (CRASH-PROOF)
+  // 🎵 AUDIO (Never Fail)
   if (req.url.startsWith("/audio")) {
     try {
-      if (!latestAudioBuffer) {
-        console.log("⚠ No audio yet → sending silence MP3");
-
-        const silenceBase64 =
-          "SUQzAwAAAAAAFlRFTkMAAAAPAAADTGF2ZjU4LjMyLjEwNAAAAAAAAAAAAAAA//uQxAADBzQAZGF0YQAAAAA=";
-
-        const silenceBuffer = Buffer.from(silenceBase64, "base64");
-
-        res.writeHead(200, {
-          "Content-Type": "audio/mpeg",
-          "Content-Length": silenceBuffer.length
-        });
-
-        return res.end(silenceBuffer);
-      }
+      const buffer = latestAudioBuffer || Buffer.from("");
 
       res.writeHead(200, {
         "Content-Type": "audio/mpeg",
-        "Content-Length": latestAudioBuffer.length
+        "Content-Length": buffer.length
       });
 
-      return res.end(latestAudioBuffer);
+      return res.end(buffer);
 
     } catch (err) {
-      console.log("🔥 AUDIO ERROR:", err);
       res.writeHead(200);
-      return res.end();
+      return res.end("");
     }
   }
 
-  // 📞 VOICE (Incoming Call)
+  // 📞 VOICE
   if (req.url.startsWith("/voice")) {
     res.writeHead(200, { "Content-Type": "text/xml" });
 
@@ -124,7 +114,7 @@ const server = http.createServer(async (req, res) => {
       `);
 
     } catch (err) {
-      console.log("🔥 VOICE TTS ERROR:", err);
+      console.log("TTS ERROR:", err);
 
       return res.end(`
 <Response>
@@ -135,7 +125,7 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // 🎤 PROCESS (Speech Handler)
+  // 🎤 PROCESS
   else if (req.url.startsWith("/process")) {
     let body = "";
 
@@ -151,7 +141,12 @@ const server = http.createServer(async (req, res) => {
         logCall(`User said: ${speech}`);
 
         const replyText = getDemoReply(speech);
-        latestAudioBuffer = await textToSpeech(replyText);
+
+        try {
+          latestAudioBuffer = await textToSpeech(replyText);
+        } catch {
+          latestAudioBuffer = null;
+        }
 
         logCall(`AI replied: ${replyText}`);
 
@@ -163,8 +158,6 @@ const server = http.createServer(async (req, res) => {
         `);
 
       } catch (err) {
-        console.log("🔥 PROCESS ERROR:", err);
-
         res.end(`
 <Response>
   <Say>Sorry sir, network issue aa gaya.</Say>
@@ -190,7 +183,6 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-// 🚀 START
 server.listen(PORT, () => {
   console.log("✅ Server started on port " + PORT);
 });
